@@ -1,50 +1,54 @@
-# Laboratorio ACYE1 - Proyecto #2: MiniShell en ARM-64 Puro
+# Laboratorio ACYE1 - Proyecto No. 2: MiniShell en ARM-64 Puro
 
-## 👥 Datos del Estudiante
-* **Nombre:** Yesus Rudy Espinoza Pivaral
+## 👥 Información General
+* **Estudiante:** Yesus Rudy Espinoza Pivaral
 * **Carnet:** 201020621
 * **Universidad:** Universidad de San Carlos de Guatemala
-* **Sección de Laboratorio:** A
+* **Facultad:** Ingeniería
+* **Escuela:** Ciencias y Sistemas
+* **Curso:** Arquitectura de Computadores y Ensambladores 1
 * **Auxiliar:** Diego Josue Guevarra
+* **Semestre:** Segundo Semestre 2026
 
 ---
 
-## 🎯 1. Decisiones de Diseño de Arquitectura
+## 🎯 1. Marco Formativo y Competencias Desarrolladas
 
-El proyecto está estructurado como un entorno **REPL (Read-Eval-Print Loop)** implementado en bajo nivel puro. No depende de ninguna biblioteca dinámica de C (`libc`) ni de funciones del sistema estándar. Toda la lógica de interacción con la terminal y la pantalla se procesa mediante interrupciones de software directas al hardware.
+### 🤝 Excelencia Académica Aplicada
+En cumplimiento con el marco formativo del laboratorio, este proyecto se diseñó de forma autónoma y con un control estricto de los recursos de hardware. Se logró dominar el funcionamiento interno del sistema operativo interactuando directamente con el Kernel de Linux a través de llamadas al sistema (syscalls) nativas de 64 bits, escribiendo código ensamblador modular, limpio y altamente documentado.
 
-### 🏢 Gestión y Preservación del Stack Frame
-Cada una de las funciones modulares del sistema cuenta con un preámbulo y epílogo estricto para balancear la pila:
-* Se reclaman los bytes necesarios en múltiplos de 16 mediante indexación pre-indexada (`stp x29, x30, [sp, #-16]!`) para resguardar el **Frame Pointer** y el **Link Register (X30)**.
-* Al finalizar la subrutina, se devuelven los recursos de forma post-indexada (`ldp x29, x30, [sp], #16`) antes de la ejecución de la instrucción `ret`, evitando desalineaciones del bus.
-
----
-
-## 🧭 2. Desglose de las Syscalls Empleadas (Linux ARM64)
-
-| No. Syscall | Nombre Técnico | Registro `X8` | Propósito en el MiniShell |
-| :---: | :--- | :---: | :--- |
-| **63** | `sys_read` | `#63` | Captura los bytes ingresados por el usuario desde el teclado. |
-| **64** | `sys_write` | `#64` | Imprime el prompt personalizado y los mensajes ANSI por pantalla. |
-| **93** | `sys_exit` | `#93` | Cierra los subprocesos y finaliza el intérprete de comandos de forma limpia. |
-| **220** | `sys_fork` | `#220` | Bifurca el proceso del shell para generar un entorno hijo aislado. |
-| **221** | `sys_execve` | `#221` | Transforma el proceso hijo reemplazando su imagen por el comando externo. |
-| **260** | `sys_wait4` | `#260` | Pausa el proceso padre hasta que el comando externo finalice su ejecución. |
+### 🧠 Conceptos de los Capítulos 1 al 5 Aplicados
+1. **Manejo de Datos de 1 Byte (Capítulo 2):** El análisis de texto se procesa carácter por carácter utilizando instrucciones de carga de bytes (`ldrb`) sobre registros `W` de 32 bits, respetando la estructura de la tabla ASCII.
+2. **Direccionamiento Escalado por Registro (Capítulo 3):** Para almacenar las direcciones de los argumentos dentro de la tabla `argv`, se aplica direccionamiento indexado con desplazamiento lógico a la izquierda de 3 bits (`LSL #3`), multiplicando el índice de forma inmediata por 8 debido al tamaño de los punteros de 64 bits.
+3. **Estructuras de Decisión (Capítulo 4):** Las bifurcaciones condicionales y comparaciones de cadenas simulan estructuras de alto nivel evaluando directamente el estado de las banderas de condición (`N`, `Z`, `C`, `V`) en el estado del procesador (`PSTATE`).
+4. **Preservación del Stack Frame (Capítulo 5):** Cada una de las subrutinas modularizadas salvaguarda el contexto de ejecución respetando la convención formal de llamadas de ARM64 (AAPCS), utilizando emparejamientos pre-indexados y post-indexados (`stp` / `ldp`) para proteger el Link Register (`X30`).
 
 ---
 
-## 🛠️ 3. Guía de Compilación y Automatización
+## 🧭 2. Justificación Técnica de las Syscalls Empleadas
 
-Para levantar e interactuar con el entorno del MiniShell en el emulador o sistema nativo, se integra un `Makefile` que automatiza el proceso con las herramientas de GNU Assembler (`as`) y el enlazador estático puro (`ld`):
+El núcleo del MiniShell interactúa de forma directa con los servicios del sistema operativo mediante interrupciones de software (`svc #0`), eliminando cualquier dependencia de bibliotecas estándar de C:
+
+* **`sys_read` (Syscall 63):** Captura los bytes provenientes de la entrada estándar (`stdin`) depositándolos de forma segura en un búfer estático de la sección `.bss`.
+* **`sys_write` (Syscall 64):** Envía flujos de caracteres a la salida estándar (`stdout`) para renderizar el prompt interactivo y las secuencias de escape ANSI por hardware.
+* **`sys_exit` (Syscall 93):** Devuelve el control del hilo de ejecución de forma segura al kernel de Linux al invocar el comando interno `exit`.
+* **`sys_clone` (Syscall 220):** Bifurca el proceso actual pasando el flag `#17` (`SIGCHLD`) para generar un proceso hijo controlado.
+* **`sys_execve` (Syscall 221):** Muta la imagen de memoria del proceso hijo para cargar y ejecutar comandos del sistema (como `/bin/ls`) utilizando el vector `argv` generado por el tokenizador.
+* **`sys_wait4` (Syscall 260):** Sincroniza los hilos pausando al proceso padre hasta que el hijo termine de ejecutarse, evitando la corrupción visual del prompt.
+
+---
+
+## 🛠️ 3. Guía de Compilación y Ejecución
+
+Para levantar el intérprete de comandos de forma limpia en cualquier entorno emulado o nativo Linux ARM64, ejecute los siguientes comandos en su terminal:
 
 ```bash
-# Limpiar el área de trabajo
+# Limpiar binarios previos
 make clean
 
-# Compilar e incluir los símbolos de depuración (-g)
+# Compilar el proyecto completo
 make
 
-# Ejecutar el MiniShell autónomo
-./minishell
+# Ejecutar el MiniShell interactivo
+./proyecto2_201020621
 ```
-# proyecto2_201020621
