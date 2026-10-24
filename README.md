@@ -52,3 +52,10 @@ make
 # Ejecutar el MiniShell interactivo
 ./proyecto2_201020621
 ```
+### 📺 Resultados en Consola (`sys_write`)
+A continuación se muestra la salida limpia del programa en el entorno QEMU ARM64, como queda el proyecto2 al final compilado desde visual studio code en linux ubuntu.
+
+![Ejecución Correcta](Proyecto2Funcionamiento1.png)
+
+aqui podemos ver el funcionamiento del proyecto 2 por ejemplo la función ls -a
+![Ejecución Correcta](Proyecto2Funcionamiento2.png)
