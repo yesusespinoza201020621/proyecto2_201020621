@@ -1,6 +1,6 @@
 .data
 .align 3
-// Datos de identificación del estudiante (USAC)
+// practicamente son mis datos 
 encabezado1:  .ascii "MiniShell — Interprete de Comandos en ARM-64 Puro\n"
 len_enc1 = . - encabezado1
 
@@ -10,366 +10,345 @@ len_enc2 = . - encabezado2
 encabezado3:  .ascii "Auxiliar: Diego Josue Guevarra - Segundo Semestre 2026\n\n"
 len_enc3 = . - encabezado3
 
-// El prompt personalizado que se mostrará en cada ciclo
 prompt:       .ascii "MiniShell_201020621> "
 len_prompt = . - prompt
-//ls0-a
-//caracter nulo
 
-e// Mensaje de ayuda para el comando 'help'
-msg_help:     .ascii "\n--- comandar internos en minishell ---\n"
-              .ascii "  help  : Muestra esta guia de usuario.\n"
-              .ascii "  clear : Limpia el entorno de la terminal.\n"
-              .ascii "  echo  : Repite el texto enviado como argumento.\n"
-              .ascii "  exit  : Cierra el interprete de comandos.\n\n"
-len_help = . - msg_help
+// Cadenas propias del sistema toma en cuenta la primer lectura de la palabra puedo poner echo echo sin problemas
+name_help:    .asciz "help"
+name_clear:   .asciz "clear"
+name_echo:    .asciz "echo"
+name_exit:    .asciz "exit"
 
-// Mensaje de error para comandos desconocidos (Requisito de rúbrica)
-msg_error:    .ascii "MiniShell Error: Comando o programa externo no encontrado.\n"
-len_error = . - msg_error
+help_text:    .asciz "funciones Internas disponibles la quinta es la de los errores:\n help\n echo\n clear\n exit\n"
+clear_text:   .asciz "\033[2J\033[H"
+unknown_text: .asciz "Comando desconocido: "
+space:        .asciz " "
+newline:      .asciz "\n"
+limite_de_mi_error:  .asciz "Error: maximo 16 argumentos\n"
+path_bin:     .asciz "/bin/"
 
-// Secuencia de escape ANSI para limpiar pantalla y resetear cursor
-clear_ansi:   .ascii "\033[H\033[J"
-len_ansi = . - clear_ansi
+.section .bss
+.balign 8
+// Variables y estructuras estáticas de las plantillas del auxiliar
+buffer_entrada:   .skip 100
+path_ejecutable:  .skip 120
+argv:             .skip 136         // 16 punteros de argumentos + NULL final
+digits:           .skip 2           // Para impresión de números de 0 a 16
+child_status:     .skip 4           // Para capturar estado del hijo en wait4
 
-msg_newline:  .ascii "\n"
-
-// Cadenas de comparación constantes para los comandos Built-in
-cmd_exit:     .asciz "exit"
-cmd_clear:    .asciz "clear"
-cmd_help:     .asciz "help"
-cmd_echo:     .asciz "echo"
-
-// Cadenas limpias para validar comandos externos
-ext_ls:       .asciz "ls"
-ext_pwd:      .asciz "pwd"
-ext_date:     .asciz "date"
-
-// Rutas absolutas binarias requeridas para la syscall execve
-path_ls:      .asciz "/bin/ls"
-path_pwd:     .asciz "/bin/pwd"
-path_date:    .asciz "/bin/date"
-
-.bss
-.align 3
-// Búfer seguro para la entrada de datos
-buffer_entrada: .space 100
-
-// Arreglos de punteros requeridos como argumentos para la syscall execve
-.align 3
-args_vector:    .space 16       // Tabla de argumentos (Puntero al comando, puntero a NULL)
-env_vector:     .space 8        // Tabla de entorno vacía (Terminada en NULL)
-
-.text
+.section .text
 .global _start
 
-
-//main para el minishell
+// el main del sistema
 
 _start:
-    // 1. Imprimir encabezados de presentación al arrancar
-    mov     x0, #1                  // Descriptor: Salida estándar (pantalla)
-    ldr     x1, =encabezado1        // Dirección del texto
-    mov     x2, #len_enc1           // Longitud del texto
-    mov     x8, #64                 // Syscall 64 = sys_write
-    svc     #0                      // Invoca al kernel de Linux
+    // 1. Mostrar encabezados institucionales de la USAC al iniciar
+    ldr     x1, =encabezado1
+    mov     x2, len_enc1
+    bl      print_fixed_len
 
-    mov     x0, #1
     ldr     x1, =encabezado2
-    mov     x2, #len_enc2
-    mov     x8, #64
-    svc     #0
+    mov     x2, len_enc2
+    bl      print_fixed_len
 
-    mov     x0, #1
     ldr     x1, =encabezado3
-    mov     x2, #len_enc3
-    mov     x8, #64
-    svc     #0
+    mov     x2, len_enc3
+    bl      print_fixed_len
 
-// Bucle principal del intérprete de comandos (REPL)
+// Bucle interactivo REPL (Read-Eval-Print Loop)
 shell_loop:
-    // 2. Mostrar el prompt personalizado en la pantalla
-    mov     x0, #1                  
-    ldr     x1, =prompt             
-    mov     x2, #len_prompt         
-    mov     x8, #64                 // Syscall 64 = sys_write
+    // 2. Pintar el prompt interactivo por hardware
+    ldr     x1, =prompt
+    mov     x2, len_prompt
+    bl      print_fixed_len
+
+    // 3. Capturar la entrada del teclado con la syscall read (Syscall 63)
+    mov     x0, #0                  // stdin
+    ldr     x1, =buffer_entrada     // Destino
+    mov     x2, #100                // Límite de bytes
+    mov     x8, #63                 // sys_read
     svc     #0                      
 
-    // 3. Leer la entrada del usuario desde el teclado (Syscall 63)
-    mov     x0, #0                  // Descriptor: Entrada estándar (teclado)
-    ldr     x1, =buffer_entrada     // Búfer en RAM seguro
-    mov     x2, #100                // Capacidad máxima de lectura (100 bytes)
-    mov     x8, #63                 // Syscall 63 = sys_read
-    svc     #0                      // El procesador se detiene aquí esperando "Enter"
-
-    // Guardamos la cantidad de bytes leídos devueltos en X0
-    mov     x19, x0                 
-
-    // Validación de seguridad: si no escribió nada (solo dio Enter), vuelve al prompt
-    cmp     x19, #1
+    // Validación de buffer vacío o entrada nula
+    cmp     x0, #1
     b.le    shell_loop
 
-    // 4. FUNCIÓN MODULAR 1: Limpiar el carácter de nueva línea '\n'
-    ldr     x0, =buffer_entrada     // Parámetro 1: Dirección base del búfer
-    bl      quitar_nueva_linea      // Llama a tu función modular
+    // 4. FUNCIÓN MODULAR 1: Quitar el salto de línea '\n' antes del parsing
+    ldr     x0, =buffer_entrada
+    bl      quitar_nueva_linea
 
-    // 5. EVALUACIÓN DE COMANDO INTERNO: 'exit'
-    ldr     x0, =buffer_entrada     
-    ldr     x1, =cmd_exit           
-    bl      comparar_cadenas        // FUNCIÓN MODULAR 2: strcmp puro
-    cmp     x0, #0
-    b.eq    ejecutar_salir          
-
-    // 6. EVALUACIÓN DE COMANDO INTERNO: 'clear'
-    ldr     x0, =buffer_entrada     
-    ldr     x1, =cmd_clear          
-    bl      comparar_cadenas        
-    cmp     x0, #0
-    b.eq    ejecutar_clear          
-
-    // 7. EVALUACIÓN DE COMANDO INTERNO: 'help'
-    ldr     x0, =buffer_entrada     
-    ldr     x1, =cmd_help           
-    bl      comparar_cadenas        
-    cmp     x0, #0
-    b.eq    ejecutar_help           
-
-    // 8. EVALUACIÓN DE COMANDO INTERNO COMPUESTO: 'echo [argumento]'
-    ldr     x0, =buffer_entrada     
-    ldr     x1, =cmd_echo           
-    bl      ejecutar_echo_built_in  
-    cmp     x0, #0
-    b.eq    shell_loop              // Si fue ejecutado de forma interna, reitera ciclo
-
+    // 5. FUNCIÓN MODULAR 2 (PLANTILLA AUXILIAR): Tokenizador parse_line
+    ldr     x0, =buffer_entrada
+    ldr     x1, =argv
+    mov     x2, #16                 // Máximo 16 argumentos permitidos
+    bl      parse_line              // X0 retorna el conteo de argumentos (argc)
     
-    // GESTIÓN DE PROGRAMAS EXTERNOS CORREGIDA (ls, pwd, date)
-   
-    ldr     x0, =buffer_entrada
-    ldr     x1, =ext_ls
-    bl      comparar_cadenas
     cmp     x0, #0
-    b.eq    .L_launch_ls
+    b.lt    .L_too_many_args        // Si retorna -1, excedió el límite
 
-    ldr     x0, =buffer_entrada
-    ldr     x1, =ext_pwd
-    bl      comparar_cadenas
-    cmp     x0, #0
-    b.eq    .L_launch_pwd
-
-    ldr     x0, =buffer_entrada
-    ldr     x1, =ext_date
-    bl      comparar_cadenas
-    cmp     x0, #0
-    b.eq    .L_launch_date
-
-    // Si no fue ningún comando interno ni externo válido, muestra error
-    mov     x0, #1
-    ldr     x1, =msg_error
-    mov     x2, #len_error
-    mov     x8, #64
-    svc     #0
+    // 6. FUNCIÓN MODULAR 3 (PLANTILLA AUXILIAR): Despachador centralizado
+    ldr     x0, =argv
+    bl      dispatch                // Evalúa si es comando interno o externo
     b       shell_loop
 
-.L_launch_ls:
-    ldr     x20, =path_ls
-    b       .L_execute_fork
+.L_too_many_args:
+    ldr     x1, =limite_de_mi_error
+    bl      print_z
+    b       shell_loop
 
-.L_launch_pwd:
-    ldr     x20, =path_pwd
-    b       .L_execute_fork
+// implementación de las funciones auxiliares que vamos a usar
 
-.L_launch_date:
-    ldr     x20, =path_date
 
-.L_execute_fork:
-    // Invocamos sys_fork (Syscall 220) para bifurcar el sistema operativo
-    mov     x8, #220                // Syscall 220 = fork
+// SUBRUTINA: PARSE_LINE (MÓDULO DE PARSING EXIGIDO - SOURCE 8)
+parse_line:
+    mov     x3, x0                  // Posición actual del buffer
+    mov     x4, #0                  // Cantidad de argumentos (argc)
+    mov     x5, x1                  // Siguiente posición de la tabla argv
+
+skip_separators:
+    ldrb    w6, [x3]
+    cbz     w6, parse_done
+    cmp     w6, #' '
+    b.eq    erase_separator
+    cmp     w6, #9                  // Tabulación \t
+    b.eq    erase_separator
+
+    cmp     x4, x2                  // Valida límite de desbordamiento
+    b.ge    parse_overflow          
+    str     x3, [x5]                // Almacena dirección del token actual en argv
+    add     x5, x5, #8
+    add     x4, x4, #1
+
+scan_word:
+    ldrb    w6, [x3]
+    cbz     w6, parse_done
+    cmp     w6, #' '
+    b.eq    erase_separator
+    cmp     w6, #9
+    b.eq    erase_separator
+    add     x3, x3, #1
+    b       scan_word
+
+erase_separator:
+    strb    wzr, [x3]               // Reemplaza separador por NUL por hardware
+    add     x3, x3, #1
+    b       skip_separators
+
+parse_done:
+    str     xzr, [x5]               // Cierra el arreglo argv con NULL
+    mov     x0, x4                  // Retorna argc
+    ret
+
+parse_overflow:
+    str     xzr, [x5]               // Cierra seguro en NULL
+    mov     x0, #-1                 // Código de error por exceso de argumentos
+    ret
+
+// SUBRUTINA: DISPATCH (DESPACHADOR MODULAR - SOURCE 9)
+dispatch:
+    stp     x19, x30, [sp, #-16]!   // Resguarda el marco de la pila
+    mov     x19, x0
+    ldr     x0, [x19]               // Carga el nombre del comando (argv[0])
+    cbz     x0, dispatch_done       // Si es nulo, aborta
+
+    // Comparación secuencial contra los 4 Built-ins requeridos
+    ldr     x1, =name_help
+    bl      string_equal
+    cbnz    x0, do_help
+
+    ldr     x0, [x19]
+    ldr     x1, =name_echo
+    bl      string_equal
+    cbnz    x0, do_echo
+
+    ldr     x0, [x19]
+    ldr     x1, =name_clear
+    bl      string_equal
+    cbnz    x0, do_clear
+
+    ldr     x0, [x19]
+    ldr     x1, =name_exit
+    bl      string_equal
+    cbnz    x0, do_exit
+
+    // Si no fue comando interno, se procesa dinámicamente como externo (SOURCE 10)
+    b       ejecutar_comando_externo
+
+do_help:
+    bl      builtin_help
+    b       dispatch_success
+do_echo:
+    mov     x0, x19                 // Pasa la tabla completa de argv a echo
+    bl      builtin_echo
+    b       dispatch_success
+do_clear:
+    bl      builtin_clear
+    b       dispatch_success
+do_exit:
+    bl      builtin_exit
+
+dispatch_success:
+    mov     x0, #1
+dispatch_done:
+    ldp     x19, x30, [sp], #16
+    ret
+
+// subturina para comparar los texto
+string_equal:
+compare_byte:
+    ldrb    w2, [x0]
+    ldrb    w3, [x1]
+    cmp     w2, w3
+    b.ne    unequal
+    cbz     w2, equal               // Ambas cadenas finalizaron simultáneamente en NUL
+    add     x0, x0, #1
+    add     x1, x1, #1
+    b       compare_byte
+equal:
+    mov     x0, #1                  // Retorna 1 (Verdadero)
+    ret
+unequal:
+    mov     x0, #0                  // Retorna 0 (Falso)
+    ret
+
+
+// sección de los comandos internos (BUILT-INS OFICIALES)
+
+builtin_help:
+    ldr     x1, =help_text
+    b       print_z
+
+builtin_clear:
+    ldr     x1, =clear_text
+    b       print_z
+
+builtin_echo:
+    stp     x19, x30, [sp, #-16]!
+    add     x19, x0, #8             // Desplaza el puntero para iniciar en argv[1]
+echo_word:
+    ldr     x1, [x19]
+    cbz     x1, echo_newline        // Fin de la tabla detectado por puntero NULL
+    bl      print_z
+    add     x19, x19, #8            // Siguiente casilla del vector de punteros
+    ldr     x0, [x19]
+    cbz     x0, echo_newline
+    ldr     x1, =space
+    bl      print_z
+    b       echo_word
+echo_newline:
+    ldr     x1, =newline
+    bl      print_z
+    ldp     x19, x30, [sp], #16
+    ret
+
+builtin_exit:
+    mov     x0, #0
+    mov     x8, #93                 // Syscall 93 = sys_exit
+    svc     #0
+
+// gestion dinamica para la parte de los procesos externos (COMBINACIÓN CLONE + EXECVE - SOURCE 10)
+
+ejecutar_comando_externo:
+    stp     x19, x30, [sp, #-16]!
+    
+    // Construimos dinámicamente la ruta absoluta concatenando "/bin/" + argv[0]
+    ldr     x0, =path_bin
+    ldr     x1, [x19]               // Nombre del comando (ej: "ls")
+    ldr     x2, =path_ejecutable
+    bl      concatenar_ruta
+
+    // Invocación formal de sys_clone con la firma exacta del auxiliar (Syscall 220)
+    mov     x0, #17                 // SIGCHLD mandatorio para notificar al padre
+    mov     x1, #0                  // Utiliza el segmento de pila actual en el hijo
+    mov     x2, #0                  
+    mov     x3, #0                  
+    mov     x4, #0                  
+    mov     x8, #220                // sys_clone
     svc     #0
     
-    // El kernel devuelve el PID del hijo en X0
     cmp     x0, #0
-    b.eq    .L_proceso_hijo         // Si X0 == 0, somos el proceso hijo; va a ejecutar
-    
-    // Si X0 > 0, somos el proceso padre. Debemos esperar a que el hijo termine (wait4)
-    mov     x1, #0                  // Status NULL
-    mov     x2, #0                  // Options 0
-    mov     x3, #0                  // Rusage NULL
+    b.lt    .L_error_externo        // Error si el retorno es negativo
+    cbz     x0, .L_entorno_hijo     // Si es cero, la CPU está procesando en el hijo
+
+// Proceso Padre: Espera obligatoria estructurada wait4 (Source 10)
+    mov     x19, x0                 // Almacena el PID del proceso hijo generado
+.L_wait_child_loop:
+    mov     x0, x19
+    ldr     x1, =child_status       // Dirección del estado de retorno en .bss
+    mov     x2, #0                  
+    mov     x3, #0                  
     mov     x8, #260                // Syscall 260 = wait4
     svc     #0
-    b       shell_loop              // Cuando el hijo termina, el padre vuelve al bucle
+    cmp     x0, #-4                 // Comprobación EINTR: repetir la espera si fue interrumpido
+    b.eq    .L_wait_child_loop
+    b       .L_externo_exito
 
-.L_proceso_hijo:
-    // Configuramos los vectores de argumentos requeridos por execve en la sección .bss
-    ldr     x1, =args_vector
-    str     x20, [x1]               // args_vector[0] = Dirección de la ruta absoluta (/bin/ls)
-    mov     x2, #0
-    str     x2, [x1, #8]            // args_vector[1] = NULL (Fin obligatorio del arreglo)
+.L_entorno_hijo:
+    // Ajustamos la primera celda de la tabla de argumentos con la ruta absoluta generada
+    ldr     x1, =argv
+    ldr     x0, =path_ejecutable
+    str     x0, [x1]                // argv[0] = "/bin/ls" o la ruta calculada
 
-    ldr     x2, =env_vector
-    str     x2, [x2]                // env_vector[0] = NULL (Entorno vacío sin variables)
+    // Invocación de la syscall execve (Syscall 221)
+    ldr     x0, =path_ejecutable    // Parámetro 1: Dirección del binario
 
-    // Invocamos sys_execve (Syscall 221) para transformar al hijo en el programa externo
-    mov     x0, x20                 // Parámetro 1: Dirección de la ruta binaria
-    ldr     x1, =args_vector        // Parámetro 2: Arreglo de argumentos
-    ldr     x2, =env_vector         // Parámetro 3: Arreglo de entorno
-    mov     x8, #221                // Syscall 221 = execve
-    svc     #0                      // Transforma el proceso
-    
-    // Si execve llegara a fallar por permisos, cierra el hijo de forma segura
-    mov     x0, #1
-    mov     x8, #93
-    svc     #0
-
-ejecutar_salir:
-    mov     x0, #0                   
-    mov     x8, #93                 
-    svc     #0                      
-
-ejecutar_clear:
-    bl      cmd_internal_clear      
-    b       shell_loop
-
-ejecutar_help:
-    bl      cmd_internal_help       
-    b       shell_loop
-
-// =============================================================================
-// FUNCIÓN MODULAR 1: QUITAR NUEVA LÍNEA ('\n') EN LA RAM
-// =============================================================================
-quitar_nueva_linea:
-    stp     x29, x30, [sp, #-16]!   
-    mov     x29, sp
-
-.L_find_nl_loop:
-    ldrb    w2, [x0]                
-    cmp     w2, #10                 
-    b.eq    .L_replace_nl           
-    cmp     w2, #0                  
-    b.eq    .L_end_nl               
-    add     x0, x0, #1              
-    b       .L_find_nl_loop
-
-.L_replace_nl:
-    mov     w2, #0                  
-    strb    w2, [x0]                
-
-.L_end_nl:
-    ldp     x29, x30, [sp], #16     
-    ret
-
-// =============================================================================
-// FUNCIÓN MODULAR 2: STRCMP EN BAJO NIVEL PURO
-// =============================================================================
-comparar_cadenas:
-    stp     x29, x30, [sp, #-16]!   
-    mov     x29, sp
-
-.L_strcmp_loop:
-    ldrb    w2, [x0], #1            
-    ldrb    w3, [x1], #1            
-    
-    cmp     w2, w3                  
-    b.ne    .L_strcmp_diff          
-
-    cmp     w2, #0                  
-    b.eq    .L_strcmp_equal         
-
-    b       .L_strcmp_loop          
-
-.L_strcmp_diff:
-    mov     x0, #1                  
-    b       .L_strcmp_end
-
-.L_strcmp_equal:
-    mov     x0, #0                  
-
-.L_strcmp_end:
-    ldp     x29, x30, [sp], #16     
-    ret
-
-// =============================================================================
-// FUNCIÓN MODULAR 3: COMANDO INTERNO CLEAR (ANSI DRIVER)
-// =============================================================================
-cmd_internal_clear:
-    stp     x29, x30, [sp, #-16]!   
-
-mov     x29, sp
-mov     x0, #1                  // Destino: Pantalla
-ldr     x1, =clear_ansi         // Cadena de escape para limpiar terminal
-mov     x2, #len_ansi           // Cantidad de bytes
-mov     x8, #64                 // Syscall 64 = sys_write
-svc     #0                      // Ejecuta la limpieza por hardware
-ldp     x29, x30, [sp], #16     // Restaura Stack Frame
-ret
-
-// =============================================================================
-// FUNCIÓN MODULAR 4: COMANDO INTERNO HELP (MANUAL REQUERIDO)
-// =============================================================================
-cmd_internal_help:
-stp     x29, x30, [sp, #-16]!   // Guarda FP y LR en el Stack
-mov     x29, sp
-mov     x0, #1                  // Destino: Pantalla
-ldr     x1, =msg_help           // Carga la lista de comandos válidos
-mov     x2, #len_help           // Longitud del mensaje
-mov     x8, #64                 // Syscall 64 = sys_write
-svc     #0                      // Imprime la ayuda por hardware
-ldp     x29, x30, [sp], #16     // Restaura Stack Frame
-ret
-
-// =============================================================================
-// FUNCIÓN MODULAR 5: COMANDO INTERNO ECHO CON PARSING DE ARGUMENTOS
-// =============================================================================
-ejecutar_echo_built_in:
-stp     x29, x30, [sp, #-32]!   // Reserva espacio en la pila
-mov     x29, sp
-str     x19, [sp, #16]          // Resguarda registro de trabajo
-mov     x19, x0                 // X19 = Dirección del búfer ingresado
-// Comparamos los primeros 4 bytes para ver si inicia con la palabra "echo"
-ldrb    w2, [x0], #1
-cmp     w2, #'e'
-b.ne    .L_echo_fail
-ldrb    w2, [x0], #1
-cmp     w2, #'c'
-b.ne    .L_echo_fail
-ldrb    w2, [x0], #1
-cmp     w2, #'h'
-b.ne    .L_echo_fail
-ldrb    w2, [x0], #1
-cmp     w2, #'o'
-b.ne    .L_echo_fail
-// Verificamos si lo que sigue es un espacio o el final de la cadena
-ldrb    w2, [x0]
-cmp     w2, #' '                // Si hay un espacio, saltamos a imprimir el argumento
-b.eq    .L_echo_print_args
-cmp     w2, #0                  // Si es el fin de cadena (escribió "echo" a secas)
-b.eq    .L_echo_newline
-b       .L_echo_fail            // Si decía otra cosa (ej: "echos"), aborta
-.L_echo_print_args:
-add     x0, x0, #1              // Se salta el espacio para apuntar directo al texto
-mov     x1, x0                  // X1 = Puntero al texto a imprimir
-// Calculamos la longitud del argumento recorriendo hasta encontrar el '\0'
-mov     x2, #0                  // Inicializa contador de bytes en 0
-.L_echo_len_loop:
-ldrb    w3, [x0, x2]
-cmp     w3, #0
-b.eq    .L_echo_execute_write
-add     x2, x2, #1
-b       .L_echo_len_loop
-.L_echo_execute_write:
-mov     x0, #1                  // Destino: Pantalla
-mov     x8, #64                 // Syscall 64 = sys_write
-svc     #0                      // Imprime el texto del usuario
-.L_echo_newline:
-mov     x0, #1                  // Destino: Pantalla
-ldr     x1, =msg_newline        // Imprime un salto de línea decorativo final
-mov     x2, #1
-mov     x8, #64
+ldr     x1, =argv               // Parámetro 2: Tabla de argumentos completa con flags
+mov     x2, #0                  // Parámetro 3: Entorno vacío terminado en NULL
+mov     x8, #221                // sys_execve
 svc     #0
-mov     x0, #0                  // Éxito
-b       .L_echo_end
-.L_echo_fail:
-mov     x0, #1                  // No fue echo
-.L_echo_end:
-ldr     x1, [sp, #16]           // Restaura los registros callee-saved
-ldp     x29, x30, [sp], #32
+.L_error_externo:
+// Si la resolución del binario falla, imprime la excepción controlada de la rúbrica
+ldr     x1, =unknown_text
+bl      print_z
+ldr     x1, [x19]
+bl      print_z
+ldr     x1, =newline
+bl      print_z
+.L_externo_exito:
+ldp     x19, x30, [sp], #16
+ret
+// subrutinas de impresión y utilería para el proyecto
+
+quitar_nueva_linea:
+mov     x1, x0
+.L_nl_loop:
+ldrb    w2, [x1]
+cbz     w2, .L_nl_end
+cmp     w2, #10                 // Busca carácter \n
+b.eq    .L_nl_replace
+add     x1, x1, #1
+b       .L_nl_loop
+.L_nl_replace:
+strb    wzr, [x1]               // Reemplaza por fin de cadena
+.L_nl_end:
+ret
+concatenar_ruta:
+.L_copy_p1:
+ldrb    w3, [x0], #1
+cbz     w3, .L_copy_p2
+strb    w3, [x2], #1
+b       .L_copy_p1
+.L_copy_p2:
+ldrb    w3, [x1], #1
+strb    w3, [x2], #1
+cbnz    w3, .L_copy_p2
+ret
+print_fixed_len:
+mov     x0, #1                  // stdout
+mov     x8, #64                 // sys_write
+svc     #0
+ret
+print_z:
+mov     x2, #0
+mov     x3, x1
+count_bytes:
+ldrb    w4, [x3]
+cbz     w4, write_text
+add     x3, x3, #1
+add     x2, x2, #1
+b       count_bytes
+write_text:
+mov     x0, #1
+mov     x8, #64                 // sys_write
+svc     #0
 ret
